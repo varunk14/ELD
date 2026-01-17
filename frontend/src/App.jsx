@@ -8,6 +8,7 @@ import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
+import TripPlanner from './pages/TripPlanner';
 
 const App = () => {
   return (
@@ -32,15 +33,12 @@ const App = () => {
                 }
               />
               
-              {/* Placeholder routes for future pages */}
+              {/* Trip Planner */}
               <Route
                 path="/trip-planner"
                 element={
                   <ProtectedRoute>
-                    <div className="max-w-7xl mx-auto px-4 py-8">
-                      <h1 className="text-2xl font-bold">Trip Planner</h1>
-                      <p className="text-gray-600 mt-2">Coming in MVP 2...</p>
-                    </div>
+                    <TripPlanner />
                   </ProtectedRoute>
                 }
               />
