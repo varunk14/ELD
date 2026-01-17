@@ -2,6 +2,7 @@ import { useState } from 'react';
 import TripForm from '../components/trip/TripForm';
 import TripMap from '../components/map/TripMap';
 import { TripSchedule, HoursSummary } from '../components/trip';
+import { LogViewer } from '../components/log';
 import { tripAPI } from '../services/api';
 
 const TripPlanner = () => {
@@ -185,6 +186,21 @@ const TripPlanner = () => {
             <TripSchedule
               schedule={tripData.schedule}
               stops={tripData.stops}
+            />
+
+            {/* ELD Log Sheets */}
+            <LogViewer
+              schedule={tripData.schedule}
+              tripInfo={{
+                totalMiles: tripData.total_distance_miles,
+              }}
+              driverInfo={{
+                name: 'Driver',
+                company: '',
+                truckNumber: '',
+                trailerNumber: '',
+                homeTerminal: '',
+              }}
             />
           </div>
         )}
