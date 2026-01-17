@@ -9,6 +9,8 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import TripPlanner from './pages/TripPlanner';
+import TripHistory from './pages/TripHistory';
+import TripDetail from './pages/TripDetail';
 
 const App = () => {
   return (
@@ -46,10 +48,15 @@ const App = () => {
                 path="/history"
                 element={
                   <ProtectedRoute>
-                    <div className="max-w-7xl mx-auto px-4 py-8">
-                      <h1 className="text-2xl font-bold">Trip History</h1>
-                      <p className="text-gray-600 mt-2">Coming in MVP 6...</p>
-                    </div>
+                    <TripHistory />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/trip/:id"
+                element={
+                  <ProtectedRoute>
+                    <TripDetail />
                   </ProtectedRoute>
                 }
               />

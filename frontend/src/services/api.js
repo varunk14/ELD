@@ -87,6 +87,9 @@ export const authAPI = {
 // Trip API functions
 export const tripAPI = {
   calculate: (data) => api.post('/trips/calculate/', data),
+  list: () => api.get('/trips/'),
+  get: (id) => api.get(`/trips/${id}/`),
+  delete: (id) => api.delete(`/trips/${id}/delete/`),
   geocode: (address) => api.get('/geocode/', { params: { address } }),
 };
 

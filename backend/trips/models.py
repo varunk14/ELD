@@ -91,6 +91,24 @@ class Trip(models.Model):
         blank=True
     )
 
+    # Full schedule data (stored as JSON)
+    schedule = models.JSONField(
+        default=list,
+        blank=True
+    )
+
+    # Stops data (stored as JSON)
+    stops = models.JSONField(
+        default=list,
+        blank=True
+    )
+
+    # HOS Summary (stored as JSON)
+    hos_summary = models.JSONField(
+        default=dict,
+        blank=True
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

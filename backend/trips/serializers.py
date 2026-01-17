@@ -56,7 +56,7 @@ class TripCalculateResponseSerializer(serializers.Serializer):
 
 
 class TripSerializer(serializers.ModelSerializer):
-    """Serializer for Trip model."""
+    """Full serializer for Trip model (detail view)."""
 
     class Meta:
         model = Trip
@@ -75,10 +75,37 @@ class TripSerializer(serializers.ModelSerializer):
             'total_distance_miles',
             'total_driving_hours',
             'route_polyline',
+            'schedule',
+            'stops',
+            'hos_summary',
             'created_at',
             'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class TripListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for listing trips."""
+
+    total_days = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Trip
+        fields = [
+            'id',
+            'current_location',
+            'pickup_location',
+            'dropoff_location',
+            'total_distance_miles',
+            'total_driving_hours',
+            'total_days',
+            'created_at',
+        ]
+
+    def get_total_days(self, obj):
+        if obj.hos_summary and 'total_days' in obj.hos_summary:
+            return obj.hos_summary['total_days']
+        return len(obj.schedule) if obj.schedule else 1
 
 
 class GeocodeSuggestSerializer(serializers.Serializer):
