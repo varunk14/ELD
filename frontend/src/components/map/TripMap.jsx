@@ -44,9 +44,13 @@ const createIcon = (color) => {
 };
 
 const markerIcons = {
-  start: createIcon('#3B82F6'),    // blue-500
-  pickup: createIcon('#22C55E'),   // green-500
-  dropoff: createIcon('#EF4444'),  // red-500
+  start: createIcon('#3B82F6'),       // blue-500
+  pickup: createIcon('#22C55E'),      // green-500
+  dropoff: createIcon('#EF4444'),     // red-500
+  fuel: createIcon('#F97316'),        // orange-500
+  rest_30min: createIcon('#EAB308'),  // yellow-500
+  rest_10hr: createIcon('#8B5CF6'),   // purple-500
+  rest_34hr: createIcon('#1E40AF'),   // blue-800
 };
 
 // Component to fit map bounds to route
@@ -66,18 +70,30 @@ const FitBounds = ({ routeCoordinates, markers }) => {
   return null;
 };
 
+// Stop type labels for display
+const stopTypeLabels = {
+  start: 'Start',
+  pickup: 'Pickup',
+  dropoff: 'Dropoff',
+  fuel: 'Fuel Stop',
+  rest_30min: '30-min Break',
+  rest_10hr: '10-hr Rest',
+  rest_34hr: '34-hr Restart',
+};
+
 const TripMap = ({
   routeCoordinates = [],
   currentLocation = null,
   pickupLocation = null,
   dropoffLocation = null,
+  stops = [],
   className = '',
 }) => {
   // Default center (center of US)
   const defaultCenter = [39.8283, -98.5795];
   const defaultZoom = 4;
 
-  // Build markers array
+  // Build markers array from primary locations
   const markers = [];
   if (currentLocation) {
     markers.push({
@@ -100,6 +116,20 @@ const TripMap = ({
       label: 'Dropoff',
     });
   }
+
+  // Add HOS stops (breaks, rest periods, fuel)
+  const hosStops = (stops || []).filter(
+    (stop) => ['fuel', 'rest_30min', 'rest_10hr', 'rest_34hr'].includes(stop.type)
+  ).map((stop) => ({
+    lat: stop.coordinates?.lat || 0,
+    lng: stop.coordinates?.lng || 0,
+    type: stop.type,
+    label: stopTypeLabels[stop.type] || stop.type,
+    name: stop.name,
+    address: stop.address,
+    activity: stop.activity,
+    duration_minutes: stop.duration_minutes,
+  }));
 
   return (
     <div className={`relative ${className}`}>
@@ -125,7 +155,7 @@ const TripMap = ({
           />
         )}
 
-        {/* Markers */}
+        {/* Primary Markers (Start, Pickup, Dropoff) */}
         {markers.map((marker, index) => (
           <Marker
             key={`${marker.type}-${index}`}
@@ -143,13 +173,42 @@ const TripMap = ({
           </Marker>
         ))}
 
+        {/* HOS Stops Markers (Breaks, Rest, Fuel) */}
+        {hosStops.map((stop, index) => (
+          <Marker
+            key={`hos-${stop.type}-${index}`}
+            position={[stop.lat, stop.lng]}
+            icon={markerIcons[stop.type] || markerIcons.start}
+          >
+            <Popup>
+              <div className="text-sm">
+                <strong className="text-gray-900">{stop.label}</strong>
+                {stop.name && (
+                  <p className="text-gray-700 font-medium mt-1">{stop.name}</p>
+                )}
+                {stop.address && (
+                  <p className="text-gray-500 text-xs mt-0.5">{stop.address}</p>
+                )}
+                {stop.activity && (
+                  <p className="text-gray-600 mt-1">{stop.activity}</p>
+                )}
+                {stop.duration_minutes > 0 && (
+                  <p className="text-gray-500 text-xs mt-1">
+                    Duration: {stop.duration_minutes} min
+                  </p>
+                )}
+              </div>
+            </Popup>
+          </Marker>
+        ))}
+
         {/* Fit bounds to route or markers */}
         <FitBounds routeCoordinates={routeCoordinates} markers={markers} />
       </MapContainer>
 
       {/* Map legend - responsive positioning */}
-      {markers.length > 0 && (
-        <div className="absolute bottom-3 left-2 lg:bottom-4 lg:left-4 bg-white/95 backdrop-blur-sm rounded-lg shadow-md p-2 lg:p-3 z-[1000] max-w-[120px] lg:max-w-none">
+      {(markers.length > 0 || hosStops.length > 0) && (
+        <div className="absolute bottom-3 left-2 lg:bottom-4 lg:left-4 bg-white/95 backdrop-blur-sm rounded-lg shadow-md p-2 lg:p-3 z-[1000] max-w-[140px] lg:max-w-none">
           <div className="text-[10px] lg:text-xs font-medium text-gray-700 mb-1.5 lg:mb-2">Legend</div>
           <div className="space-y-1 lg:space-y-1.5">
             <div className="flex items-center gap-1.5 lg:gap-2">
@@ -164,6 +223,35 @@ const TripMap = ({
               <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 rounded-full bg-red-500 flex-shrink-0" />
               <span className="text-[10px] lg:text-xs text-gray-600">Dropoff</span>
             </div>
+            {hosStops.length > 0 && (
+              <>
+                <div className="border-t border-gray-200 my-1" />
+                {hosStops.some(s => s.type === 'fuel') && (
+                  <div className="flex items-center gap-1.5 lg:gap-2">
+                    <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 rounded-full bg-orange-500 flex-shrink-0" />
+                    <span className="text-[10px] lg:text-xs text-gray-600">Fuel</span>
+                  </div>
+                )}
+                {hosStops.some(s => s.type === 'rest_30min') && (
+                  <div className="flex items-center gap-1.5 lg:gap-2">
+                    <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 rounded-full bg-yellow-500 flex-shrink-0" />
+                    <span className="text-[10px] lg:text-xs text-gray-600">30-min Break</span>
+                  </div>
+                )}
+                {hosStops.some(s => s.type === 'rest_10hr') && (
+                  <div className="flex items-center gap-1.5 lg:gap-2">
+                    <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 rounded-full bg-purple-500 flex-shrink-0" />
+                    <span className="text-[10px] lg:text-xs text-gray-600">10-hr Rest</span>
+                  </div>
+                )}
+                {hosStops.some(s => s.type === 'rest_34hr') && (
+                  <div className="flex items-center gap-1.5 lg:gap-2">
+                    <div className="w-2.5 h-2.5 lg:w-3 lg:h-3 rounded-full bg-blue-800 flex-shrink-0" />
+                    <span className="text-[10px] lg:text-xs text-gray-600">34-hr Restart</span>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}

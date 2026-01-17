@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import TripForm from '../components/trip/TripForm';
 import TripMap from '../components/map/TripMap';
+import { TripSchedule, HoursSummary } from '../components/trip';
 import { tripAPI } from '../services/api';
 
 const TripPlanner = () => {
@@ -164,11 +165,29 @@ const TripPlanner = () => {
                 currentLocation={tripData?.current_location}
                 pickupLocation={tripData?.pickup_location}
                 dropoffLocation={tripData?.dropoff_location}
+                stops={tripData?.stops}
                 className="h-full min-h-[350px] lg:min-h-[550px]"
               />
             </div>
           </div>
         </div>
+
+        {/* HOS Schedule Section - Shows after calculation */}
+        {tripData && tripData.schedule && (
+          <div className="mt-6 md:mt-8 space-y-6">
+            {/* Hours Summary */}
+            <HoursSummary
+              hosSummary={tripData.hos_summary}
+              schedule={tripData.schedule}
+            />
+
+            {/* Trip Schedule */}
+            <TripSchedule
+              schedule={tripData.schedule}
+              stops={tripData.stops}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

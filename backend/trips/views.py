@@ -11,6 +11,7 @@ from .serializers import (
 )
 from .services.geocoding import geocoding_service
 from .services.routing import routing_service
+from .services.hos_calculator import hos_calculator
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,16 @@ class TripCalculateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Calculate HOS-compliant schedule
+        hos_schedule = hos_calculator.calculate_trip_schedule(
+            total_drive_time=route['duration_hours'],
+            current_cycle_hours=float(data['current_cycle_hours']),
+            total_distance_miles=route['distance_miles'],
+            current_location=current_geo,
+            pickup_location=pickup_geo,
+            dropoff_location=dropoff_geo,
+        )
+
         # Build response
         response_data = {
             "current_location": current_geo,
@@ -78,6 +89,10 @@ class TripCalculateView(APIView):
             "total_distance_miles": round(route['distance_miles'], 2),
             "total_driving_hours": round(route['duration_hours'], 2),
             "route_polyline": route['geometry'],
+            # HOS schedule data
+            "schedule": hos_schedule['daily_schedules'],
+            "stops": hos_schedule['stops'],
+            "hos_summary": hos_schedule['summary'],
         }
 
         return Response({"data": response_data}, status=status.HTTP_200_OK)
