@@ -465,12 +465,61 @@ class HOSCalculator:
         self, activities: list, stops: list,
         start_time: datetime, total_days: int
     ) -> list:
-        """Generate daily schedule breakdown from activities."""
-        daily_schedules = []
+        """Generate daily schedule breakdown from activities.
 
-        for day in range(1, total_days + 1):
-            day_activities = [a for a in activities if a['day'] == day]
-            day_stops = [s for s in stops if s['day'] == day]
+        Activities that span midnight are split into multiple days.
+        Each day's total hours must equal 24.
+        """
+        # First, split activities that span multiple calendar days
+        split_activities = []
+        for activity in activities:
+            act_start = datetime.fromisoformat(activity['start_time'])
+            act_end = datetime.fromisoformat(activity['end_time'])
+
+            # Check if activity spans midnight
+            current_start = act_start
+            while current_start < act_end:
+                # Calculate end of current calendar day (midnight)
+                day_end = current_start.replace(hour=23, minute=59, second=59, microsecond=999999)
+                next_day_start = (current_start + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+                if act_end <= next_day_start:
+                    # Activity ends before midnight - no split needed for this portion
+                    duration = (act_end - current_start).total_seconds() / 3600
+                    split_activities.append({
+                        **activity,
+                        'start_time': current_start.isoformat(),
+                        'end_time': act_end.isoformat(),
+                        'duration_hours': duration,
+                        'calendar_date': current_start.strftime('%Y-%m-%d'),
+                    })
+                    break
+                else:
+                    # Activity spans midnight - split it
+                    duration_today = (next_day_start - current_start).total_seconds() / 3600
+                    if duration_today > 0:
+                        split_activities.append({
+                            **activity,
+                            'start_time': current_start.isoformat(),
+                            'end_time': next_day_start.isoformat(),
+                            'duration_hours': duration_today,
+                            'calendar_date': current_start.strftime('%Y-%m-%d'),
+                        })
+                    current_start = next_day_start
+
+        # Get unique calendar dates
+        calendar_dates = sorted(set(a['calendar_date'] for a in split_activities))
+
+        daily_schedules = []
+        for day_idx, cal_date in enumerate(calendar_dates, 1):
+            day_activities = [a for a in split_activities if a['calendar_date'] == cal_date]
+
+            # Get stops for this calendar date
+            day_stops = []
+            for stop in stops:
+                stop_date = datetime.fromisoformat(stop['arrival']).strftime('%Y-%m-%d')
+                if stop_date == cal_date:
+                    day_stops.append(stop)
 
             # Calculate hours by duty status
             driving_hours = sum(
@@ -495,17 +544,22 @@ class HOSCalculator:
                 day_start = day_activities[0]['start_time']
                 day_end = day_activities[-1]['end_time']
             else:
-                day_start = start_time.isoformat()
-                day_end = start_time.isoformat()
+                day_start = cal_date + 'T00:00:00'
+                day_end = cal_date + 'T23:59:59'
 
             # Calculate remaining hours for the day (to make total = 24)
             total_logged = driving_hours + on_duty_hours + off_duty_hours + sleeper_hours
             if total_logged < 24:
+                # Add remaining time as off-duty (fill the day)
                 off_duty_hours += (24 - total_logged)
+            elif total_logged > 24:
+                # Cap sleeper hours if over 24 (shouldn't happen with proper splitting)
+                excess = total_logged - 24
+                sleeper_hours = max(0, sleeper_hours - excess)
 
             daily_schedules.append({
-                'day': day,
-                'date': (start_time + timedelta(days=day-1)).strftime('%Y-%m-%d'),
+                'day': day_idx,
+                'date': cal_date,
                 'start_time': day_start,
                 'end_time': day_end,
                 'driving_hours': round(driving_hours, 2),

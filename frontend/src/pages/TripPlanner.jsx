@@ -200,7 +200,10 @@ const TripPlanner = () => {
                 truckNumber: '',
                 trailerNumber: '',
                 homeTerminal: '',
+                coDriver: '',
+                mainOfficeAddress: '',
               }}
+              stops={tripData.stops}
             />
           </div>
         )}

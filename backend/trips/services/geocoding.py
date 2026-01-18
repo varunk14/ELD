@@ -1,12 +1,9 @@
 """
-Geocoding service using Nominatim (OpenStreetMap) API.
+Geocoding service using multiple providers with fallback:
+1. Photon (Komoot) - Fast, no strict rate limits
+2. Nominatim (OpenStreetMap) - Fallback option
 
-Nominatim is free but requires:
-- User-Agent header
-- Max 1 request per second (we handle this with rate limiting)
-
-Currently using MOCK DATA for development.
-TODO: Set USE_MOCK_DATA = False when ready to use real APIs.
+Both are free and based on OpenStreetMap data.
 """
 import logging
 import time
@@ -19,8 +16,10 @@ from .mock_data import mock_geocode, mock_search
 logger = logging.getLogger(__name__)
 
 # Toggle for using mock data vs real API
-USE_MOCK_DATA = True  # TODO: Set to False for production
+USE_MOCK_DATA = False  # Using real geocoding APIs
 
+# API endpoints
+PHOTON_BASE_URL = "https://photon.komoot.io"
 NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
 USER_AGENT = "ELDTripPlanner/1.0 (contact@example.com)"
 
@@ -39,84 +38,79 @@ def _rate_limit():
 
 
 class GeocodingService:
-    """Service for geocoding addresses using Nominatim API."""
+    """Service for geocoding addresses using Photon (primary) and Nominatim (fallback)."""
 
     def __init__(self):
-        self.base_url = NOMINATIM_BASE_URL
         self.headers = {
             "User-Agent": USER_AGENT,
             "Accept": "application/json",
         }
 
-    def geocode(self, address: str) -> Optional[dict]:
-        """
-        Convert an address string to coordinates.
-
-        Args:
-            address: The address to geocode (e.g., "Chicago, IL")
-
-        Returns:
-            dict with lat, lng, display_name or None if not found
-        """
-        # Use mock data for development
-        if USE_MOCK_DATA:
-            return mock_geocode(address)
-
-        _rate_limit()
-
+    def _search_photon(self, query: str, limit: int = 5) -> list:
+        """Search using Photon API (Komoot)."""
         try:
+            logger.info(f"Searching Photon API for: {query}")
             response = requests.get(
-                f"{self.base_url}/search",
+                f"{PHOTON_BASE_URL}/api",
                 params={
-                    "q": address,
-                    "format": "json",
-                    "limit": 1,
-                    "countrycodes": "us",  # Limit to US for trucking routes
+                    "q": query,
+                    "limit": limit,
+                    "lang": "en",
                 },
                 headers=self.headers,
                 timeout=10,
             )
             response.raise_for_status()
-            results = response.json()
+            data = response.json()
+            logger.info(f"Photon returned {len(data.get('features', []))} results")
 
-            if results:
-                result = results[0]
-                return {
-                    "lat": float(result["lat"]),
-                    "lng": float(result["lon"]),
-                    "display_name": result["display_name"],
-                }
-            return None
+            results = []
+            for feature in data.get("features", []):
+                props = feature.get("properties", {})
+                coords = feature.get("geometry", {}).get("coordinates", [])
+
+                if len(coords) >= 2:
+                    # Build display name
+                    parts = []
+                    if props.get("name"):
+                        parts.append(props["name"])
+                    if props.get("city"):
+                        parts.append(props["city"])
+                    if props.get("state"):
+                        parts.append(props["state"])
+                    if props.get("country"):
+                        parts.append(props["country"])
+
+                    display_name = ", ".join(parts) if parts else props.get("name", "Unknown")
+
+                    results.append({
+                        "lat": float(coords[1]),  # Photon returns [lng, lat]
+                        "lng": float(coords[0]),
+                        "display_name": display_name,
+                        "place_id": props.get("osm_id", 0),
+                    })
+
+                    if len(results) >= limit:
+                        break
+
+            logger.info(f"Photon returned {len(results)} results for '{query}'")
+            return results
 
         except requests.RequestException as e:
-            logger.error(f"Geocoding error for '{address}': {e}")
-            return None
+            logger.warning(f"Photon search error for '{query}': {e}")
+            return []
 
-    def search(self, query: str, limit: int = 5) -> list:
-        """
-        Search for addresses matching a query (for autocomplete).
-
-        Args:
-            query: The search query
-            limit: Maximum number of results
-
-        Returns:
-            List of matching addresses with coordinates
-        """
-        # Use mock data for development
-        if USE_MOCK_DATA:
-            return mock_search(query, limit)
-
+    def _search_nominatim(self, query: str, limit: int = 5) -> list:
+        """Search using Nominatim API (fallback)."""
         _rate_limit()
 
         try:
             response = requests.get(
-                f"{self.base_url}/search",
+                f"{NOMINATIM_BASE_URL}/search",
                 params={
                     "q": query,
                     "format": "json",
                     "limit": limit,
-                    "countrycodes": "us",
                     "addressdetails": 1,
                 },
                 headers=self.headers,
@@ -136,25 +130,100 @@ class GeocodingService:
             ]
 
         except requests.RequestException as e:
-            logger.error(f"Search error for '{query}': {e}")
+            logger.warning(f"Nominatim search error for '{query}': {e}")
             return []
 
-    def reverse_geocode(self, lat: float, lng: float) -> Optional[dict]:
+    def geocode(self, address: str) -> Optional[dict]:
         """
-        Convert coordinates to an address.
+        Convert an address string to coordinates.
 
         Args:
-            lat: Latitude
-            lng: Longitude
+            address: The address to geocode (e.g., "Chicago, IL")
 
         Returns:
-            dict with display_name or None if not found
+            dict with lat, lng, display_name or None if not found
         """
+        if USE_MOCK_DATA:
+            return mock_geocode(address)
+
+        # Try Photon first, then Nominatim
+        results = self._search_photon(address, limit=1)
+        if not results:
+            results = self._search_nominatim(address, limit=1)
+
+        if results:
+            return results[0]
+        return None
+
+    def search(self, query: str, limit: int = 5) -> list:
+        """
+        Search for addresses matching a query (for autocomplete).
+
+        Args:
+            query: The search query
+            limit: Maximum number of results
+
+        Returns:
+            List of matching addresses with coordinates
+        """
+        if USE_MOCK_DATA:
+            return mock_search(query, limit)
+
+        # Try Photon first, then Nominatim as fallback
+        results = self._search_photon(query, limit)
+        if not results:
+            logger.info("Photon returned no results, trying Nominatim")
+            results = self._search_nominatim(query, limit)
+
+        return results
+
+    def _reverse_photon(self, lat: float, lng: float) -> Optional[dict]:
+        """Reverse geocode using Photon API."""
+        try:
+            response = requests.get(
+                f"{PHOTON_BASE_URL}/reverse",
+                params={
+                    "lat": lat,
+                    "lon": lng,
+                    "lang": "en",
+                },
+                headers=self.headers,
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            features = data.get("features", [])
+            if features:
+                props = features[0].get("properties", {})
+                coords = features[0].get("geometry", {}).get("coordinates", [])
+
+                parts = []
+                if props.get("name"):
+                    parts.append(props["name"])
+                if props.get("city"):
+                    parts.append(props["city"])
+                if props.get("state"):
+                    parts.append(props["state"])
+
+                return {
+                    "lat": float(coords[1]) if len(coords) >= 2 else lat,
+                    "lng": float(coords[0]) if len(coords) >= 2 else lng,
+                    "display_name": ", ".join(parts) if parts else "Unknown",
+                }
+            return None
+
+        except requests.RequestException as e:
+            logger.warning(f"Photon reverse error for ({lat}, {lng}): {e}")
+            return None
+
+    def _reverse_nominatim(self, lat: float, lng: float) -> Optional[dict]:
+        """Reverse geocode using Nominatim API."""
         _rate_limit()
 
         try:
             response = requests.get(
-                f"{self.base_url}/reverse",
+                f"{NOMINATIM_BASE_URL}/reverse",
                 params={
                     "lat": lat,
                     "lon": lng,
@@ -175,8 +244,26 @@ class GeocodingService:
             return None
 
         except requests.RequestException as e:
-            logger.error(f"Reverse geocoding error for ({lat}, {lng}): {e}")
+            logger.warning(f"Nominatim reverse error for ({lat}, {lng}): {e}")
             return None
+
+    def reverse_geocode(self, lat: float, lng: float) -> Optional[dict]:
+        """
+        Convert coordinates to an address.
+
+        Args:
+            lat: Latitude
+            lng: Longitude
+
+        Returns:
+            dict with display_name or None if not found
+        """
+        # Try Photon first, then Nominatim
+        result = self._reverse_photon(lat, lng)
+        if not result:
+            result = self._reverse_nominatim(lat, lng)
+
+        return result
 
 
 # Singleton instance

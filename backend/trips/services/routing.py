@@ -22,7 +22,7 @@ from .mock_data import mock_route, mock_trip_route
 logger = logging.getLogger(__name__)
 
 # Toggle for using mock data vs real API
-USE_MOCK_DATA = True  # TODO: Set to False for production
+USE_MOCK_DATA = False  # Using real OpenRouteService API
 
 ORS_BASE_URL = "https://api.openrouteservice.org/v2"
 
@@ -149,7 +149,8 @@ class RoutingService:
             [dropoff_location["lng"], dropoff_location["lat"]],
         ]
 
-        route = self.calculate_route(coordinates)
+        # Use driving-hgv (heavy goods vehicle) for truck routing
+        route = self.calculate_route(coordinates, profile="driving-hgv")
 
         if route:
             # Add segment information

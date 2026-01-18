@@ -10,21 +10,27 @@ import { DUTY_STATUS, DUTY_STATUS_COLORS, formatDate } from '../../constants/hos
  * - 4 duty status rows (Off Duty, Sleeper Berth, Driving, On Duty)
  * - Horizontal lines showing duration in each status
  * - Vertical lines connecting status changes
- * - Header with date, driver info, miles
+ * - Brackets for stationary periods (pre-trip, pickup, dropoff, fuel, breaks)
+ * - Header with date, driver info, carrier, vehicle numbers
  * - Hours totals (must equal 24)
- * - Remarks section with activities
+ * - Remarks section with activities and city/state locations
  */
 
 // SVG dimensions and layout constants
 const SVG_WIDTH = 900;
-const SVG_HEIGHT = 500;
+const SVG_HEIGHT = 520;
 const GRID_LEFT = 120;
 const GRID_RIGHT = 820;
-const GRID_TOP = 95;
-const GRID_BOTTOM = 255;
+const GRID_TOP = 120;
+const GRID_BOTTOM = 280;
 const GRID_WIDTH = GRID_RIGHT - GRID_LEFT;
 const ROW_HEIGHT = (GRID_BOTTOM - GRID_TOP) / 4;
 const HOUR_WIDTH = GRID_WIDTH / 24;
+
+// Activity types that require brackets (stationary periods)
+const STATIONARY_ACTIVITIES = [
+  'pre_trip', 'post_trip', 'pickup', 'dropoff', 'fueling', 'break', 'rest'
+];
 
 // Duty status row positions (from top to bottom)
 const DUTY_STATUS_ROWS = {
@@ -49,15 +55,26 @@ const HOUR_LABELS = [
 
 /**
  * Convert time string to hour decimal (0-24)
+ * For end times at midnight (00:00), returns 24 to draw line to end of day
  */
-const timeToHour = (timeStr) => {
+const timeToHour = (timeStr, isEndTime = false) => {
   if (!timeStr) return 0;
   try {
     if (timeStr.includes('T')) {
       const date = new Date(timeStr);
-      return date.getHours() + date.getMinutes() / 60;
+      const hours = date.getHours();
+      const minutes = date.getMinutes();
+      // If it's an end time at exactly midnight, treat as 24:00 (end of day)
+      if (isEndTime && hours === 0 && minutes === 0) {
+        return 24;
+      }
+      return hours + minutes / 60;
     }
     const [hours, minutes] = timeStr.split(':').map(Number);
+    // If it's an end time at exactly midnight, treat as 24:00
+    if (isEndTime && hours === 0 && (minutes || 0) === 0) {
+      return 24;
+    }
     return hours + (minutes || 0) / 60;
   } catch {
     return 0;
@@ -88,10 +105,26 @@ const formatHoursDecimal = (hours) => {
 };
 
 /**
- * Generate remarks from activities
+ * Generate remarks from activities with city/state location
  */
-const generateRemarks = (activities) => {
+const generateRemarks = (activities, stops) => {
   if (!activities) return [];
+
+  // Build a location lookup from stops
+  const stopLocations = {};
+  if (stops) {
+    stops.forEach((stop) => {
+      if (stop.location) {
+        // Extract city/state from location string (e.g., "City, State" or "City, ST")
+        const parts = stop.location.split(',').map(s => s.trim());
+        if (parts.length >= 2) {
+          stopLocations[stop.type] = `${parts[0]}, ${parts[1]}`;
+        } else {
+          stopLocations[stop.type] = stop.location;
+        }
+      }
+    });
+  }
 
   const remarks = [];
   activities.forEach((activity) => {
@@ -102,9 +135,21 @@ const generateRemarks = (activities) => {
         minute: '2-digit',
         hour12: false
       });
+
+      // Try to get location from activity or match with stop type
+      let location = activity.location || '';
+      if (!location && activity.activity_type) {
+        location = stopLocations[activity.activity_type] || '';
+      }
+
+      // Format: "Time - Description (City, State)" or just "Time - Description"
+      const text = location
+        ? `${activity.description} (${location})`
+        : activity.description;
+
       remarks.push({
         time: timeStr,
-        text: activity.description,
+        text: text,
       });
     }
   });
@@ -112,7 +157,52 @@ const generateRemarks = (activities) => {
   return remarks.slice(0, 6);
 };
 
-const LogSheet = ({ daySchedule, tripInfo, driverInfo }) => {
+/**
+ * Identify stationary periods for bracket markers
+ * Stationary = truck not moving (inspections, loading, fueling, breaks)
+ */
+const getStationaryPeriods = (activities) => {
+  if (!activities) return [];
+
+  const periods = [];
+  activities.forEach((activity) => {
+    const desc = activity.description?.toLowerCase() || '';
+
+    // Check if this is a stationary activity (truck not moving)
+    const isStationary =
+      desc.includes('inspection') ||
+      desc.includes('pre-trip') ||
+      desc.includes('post-trip') ||
+      desc.includes('pickup') ||
+      desc.includes('loading') ||
+      desc.includes('dropoff') ||
+      desc.includes('unloading') ||
+      desc.includes('fuel') ||
+      desc.includes('break') ||
+      desc.includes('rest period');
+
+    if (isStationary && activity.start_time && activity.end_time) {
+      const startHour = timeToHour(activity.start_time, false);
+      const endHour = timeToHour(activity.end_time, true);
+      const status = activity.duty_status;
+
+      // Only add bracket if duration is visible (> 5 minutes)
+      const duration = endHour - startHour;
+      if (duration > 0.08) {
+        periods.push({
+          startX: hourToX(startHour),
+          endX: hourToX(endHour < startHour ? 24 : endHour),
+          y: statusToY(status),
+          description: desc,
+        });
+      }
+    }
+  });
+
+  return periods;
+};
+
+const LogSheet = ({ daySchedule, tripInfo, driverInfo, stops }) => {
   // Process activities to create line segments
   const lineSegments = useMemo(() => {
     if (!daySchedule?.activities) return [];
@@ -121,8 +211,8 @@ const LogSheet = ({ daySchedule, tripInfo, driverInfo }) => {
     let prevStatus = null;
 
     daySchedule.activities.forEach((activity) => {
-      const startHour = timeToHour(activity.start_time);
-      const endHour = timeToHour(activity.end_time);
+      const startHour = timeToHour(activity.start_time, false);
+      const endHour = timeToHour(activity.end_time, true);
       const status = activity.duty_status;
 
       const adjustedEndHour = endHour < startHour ? 24 : endHour;
@@ -156,6 +246,11 @@ const LogSheet = ({ daySchedule, tripInfo, driverInfo }) => {
     return segments;
   }, [daySchedule]);
 
+  // Get stationary periods for bracket markers
+  const stationaryPeriods = useMemo(() => {
+    return getStationaryPeriods(daySchedule?.activities);
+  }, [daySchedule]);
+
   // Calculate hours totals
   const hoursTotals = useMemo(() => {
     if (!daySchedule) return { off: 0, sleeper: 0, driving: 0, onDuty: 0, total: 0 };
@@ -174,10 +269,10 @@ const LogSheet = ({ daySchedule, tripInfo, driverInfo }) => {
     };
   }, [daySchedule]);
 
-  // Generate remarks
+  // Generate remarks with city/state locations
   const remarks = useMemo(() => {
-    return generateRemarks(daySchedule?.activities);
-  }, [daySchedule]);
+    return generateRemarks(daySchedule?.activities, stops);
+  }, [daySchedule, stops]);
 
   return (
     <div className="w-full overflow-x-auto bg-white rounded-lg">
@@ -189,40 +284,84 @@ const LogSheet = ({ daySchedule, tripInfo, driverInfo }) => {
         {/* Background */}
         <rect x="0" y="0" width={SVG_WIDTH} height={SVG_HEIGHT} fill="white" />
 
-        {/* Title */}
-        <text x={SVG_WIDTH / 2} y="22" textAnchor="middle" fontSize="14" fontWeight="bold" fill="#111827">
+        {/* Title - U.S. DOT Format */}
+        <text x={SVG_WIDTH / 2} y="18" textAnchor="middle" fontSize="12" fontWeight="bold" fill="#111827">
           DRIVER'S DAILY LOG
         </text>
-        <text x={SVG_WIDTH / 2} y="38" textAnchor="middle" fontSize="9" fill="#6B7280">
-          (24-Hour Period)
+        <text x={SVG_WIDTH / 2} y="32" textAnchor="middle" fontSize="8" fill="#6B7280">
+          (24 Hour Period - One Calendar Day)
         </text>
 
-        {/* Header Fields */}
-        <g fontSize="9" fill="#374151">
-          <text x="20" y="55">Date:</text>
-          <text x="50" y="55" fontWeight="600">{formatDate(daySchedule?.date)}</text>
+        {/* Header Fields Row 1 */}
+        <g fontSize="8" fill="#374151">
+          {/* Date */}
+          <text x="20" y="48">Date:</text>
+          <text x="45" y="48" fontWeight="600">{formatDate(daySchedule?.date)}</text>
+          <line x1="45" y1="50" x2="120" y2="50" stroke="#D1D5DB" strokeWidth="0.5" />
 
-          <text x="180" y="55">Driver:</text>
-          <text x="215" y="55" fontWeight="600">{driverInfo?.name || 'Driver'}</text>
+          {/* Total Miles */}
+          <text x="130" y="48">Total Miles:</text>
+          <text x="180" y="48" fontWeight="600">{tripInfo?.totalMiles?.toLocaleString() || '-'}</text>
+          <line x1="180" y1="50" x2="230" y2="50" stroke="#D1D5DB" strokeWidth="0.5" />
 
-          <text x="380" y="55">Total Miles:</text>
-          <text x="440" y="55" fontWeight="600">
-            {tripInfo?.totalMiles?.toLocaleString() || '-'}
-          </text>
+          {/* Truck/Tractor No. */}
+          <text x="245" y="48">Truck/Tractor No.:</text>
+          <text x="320" y="48" fontWeight="600">{driverInfo?.truckNumber || '-'}</text>
+          <line x1="320" y1="50" x2="380" y2="50" stroke="#D1D5DB" strokeWidth="0.5" />
 
-          <text x="550" y="55">Carrier:</text>
-          <text x="590" y="55" fontWeight="600">{driverInfo?.company || '-'}</text>
+          {/* Trailer No. */}
+          <text x="395" y="48">Trailer No.:</text>
+          <text x="445" y="48" fontWeight="600">{driverInfo?.trailerNumber || '-'}</text>
+          <line x1="445" y1="50" x2="520" y2="50" stroke="#D1D5DB" strokeWidth="0.5" />
 
-          <text x="750" y="55">Day:</text>
-          <text x="775" y="55" fontWeight="600">{daySchedule?.day || 1}</text>
+          {/* Day of Trip */}
+          <text x="780" y="48">Day:</text>
+          <text x="800" y="48" fontWeight="600">{daySchedule?.day || 1}</text>
         </g>
 
-        {/* Vehicle Info */}
-        <g fontSize="8" fill="#6B7280">
-          <text x="20" y="72">Vehicle: {driverInfo?.truckNumber || '-'}</text>
-          <text x="120" y="72">Trailer: {driverInfo?.trailerNumber || '-'}</text>
-          <text x="220" y="72">Home Terminal: {driverInfo?.homeTerminal || '-'}</text>
+        {/* Header Fields Row 2 */}
+        <g fontSize="8" fill="#374151">
+          {/* Carrier */}
+          <text x="20" y="62">Carrier:</text>
+          <text x="50" y="62" fontWeight="600">{driverInfo?.company || '-'}</text>
+          <line x1="50" y1="64" x2="200" y2="64" stroke="#D1D5DB" strokeWidth="0.5" />
+
+          {/* Main Office Address */}
+          <text x="210" y="62">Main Office Address:</text>
+          <text x="295" y="62" fontWeight="600">{driverInfo?.mainOfficeAddress || '-'}</text>
+          <line x1="295" y1="64" x2="520" y2="64" stroke="#D1D5DB" strokeWidth="0.5" />
+
+          {/* Home Terminal */}
+          <text x="530" y="62">Home Terminal:</text>
+          <text x="600" y="62" fontWeight="600">{driverInfo?.homeTerminal || '-'}</text>
+          <line x1="600" y1="64" x2="780" y2="64" stroke="#D1D5DB" strokeWidth="0.5" />
         </g>
+
+        {/* Header Fields Row 3 */}
+        <g fontSize="8" fill="#374151">
+          {/* Driver Name */}
+          <text x="20" y="76">Driver:</text>
+          <text x="50" y="76" fontWeight="600">{driverInfo?.name || 'Driver'}</text>
+          <line x1="50" y1="78" x2="160" y2="78" stroke="#D1D5DB" strokeWidth="0.5" />
+
+          {/* Co-Driver */}
+          <text x="170" y="76">Co-Driver:</text>
+          <text x="210" y="76" fontWeight="600">{driverInfo?.coDriver || '-'}</text>
+          <line x1="210" y1="78" x2="300" y2="78" stroke="#D1D5DB" strokeWidth="0.5" />
+
+          {/* Shipper & Commodity */}
+          <text x="310" y="76">Shipper & Commodity:</text>
+          <text x="400" y="76" fontWeight="600">{tripInfo?.shipperCommodity || '-'}</text>
+          <line x1="400" y1="78" x2="580" y2="78" stroke="#D1D5DB" strokeWidth="0.5" />
+
+          {/* B/L Number */}
+          <text x="590" y="76">B/L No.:</text>
+          <text x="625" y="76" fontWeight="600">{tripInfo?.billOfLading || '-'}</text>
+          <line x1="625" y1="78" x2="720" y2="78" stroke="#D1D5DB" strokeWidth="0.5" />
+        </g>
+
+        {/* Horizontal separator line */}
+        <line x1="15" y1="85" x2={SVG_WIDTH - 15} y2="85" stroke="#E5E7EB" strokeWidth="1" />
 
         {/* Row Labels */}
         <g fontSize="8" fill="#374151">
@@ -340,6 +479,8 @@ const LogSheet = ({ daySchedule, tripInfo, driverInfo }) => {
             }
           })}
         </g>
+
+        {/* Bracket markers removed - keeping log sheet clean */}
 
         {/* Hours Totals (Right Side) */}
         <g fontSize="8" fill="#374151">

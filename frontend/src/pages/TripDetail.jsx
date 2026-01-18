@@ -197,6 +197,7 @@ const TripDetail = () => {
               driverInfo={{
                 name: 'Driver',
               }}
+              stops={trip.stops}
             />
           </div>
         )}

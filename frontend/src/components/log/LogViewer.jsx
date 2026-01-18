@@ -7,7 +7,7 @@ import { formatDate } from '../../constants/hos';
  * LogViewer Component
  * Displays ELD log sheets with day navigation tabs and PDF export
  */
-const LogViewer = ({ schedule, tripInfo, driverInfo }) => {
+const LogViewer = ({ schedule, tripInfo, driverInfo, stops }) => {
   const [selectedDay, setSelectedDay] = useState(1);
   const [isExporting, setIsExporting] = useState(false);
   const logSheetRef = useRef(null);
@@ -284,6 +284,7 @@ const LogViewer = ({ schedule, tripInfo, driverInfo }) => {
             daySchedule={currentDaySchedule}
             tripInfo={tripInfo}
             driverInfo={driverInfo}
+            stops={stops}
           />
         </div>
 
