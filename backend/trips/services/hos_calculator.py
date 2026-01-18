@@ -75,7 +75,8 @@ class HOSCalculator:
         state = {
             'current_time': start_time,
             'drive_hours_today': 0.0,
-            'on_duty_hours_today': 0.0,
+            'on_duty_hours_today': 0.0,  # Actual on-duty hours worked (for cycle tracking)
+            'window_hours_elapsed': 0.0,  # Elapsed time since coming on duty (14-hr window)
             'drive_since_break': 0.0,
             'cycle_hours_used': current_cycle_hours,
             'miles_since_fuel': 0.0,
@@ -91,8 +92,10 @@ class HOSCalculator:
         # Check if we need a 34-hour restart first
         if state['cycle_hours_used'] >= self.cycle_limit:
             stops.append(self._create_restart_stop(state, current_location))
-            state['cycle_hours_used'] = 0
-            state['current_day'] += 1
+            activities.append(self._create_activity(
+                state, 'restart', '34-hour restart (cycle reset)', self.restart_duration
+            ))
+            self._take_restart(state)
 
         # Day 1: Start with pre-trip inspection
         day_start_time = state['current_time']
@@ -214,9 +217,10 @@ class HOSCalculator:
 
         while remaining_hours > 0.01:  # Use small threshold to avoid floating point issues
             # Calculate available driving time before hitting any limit
+            # Note: 14-hour window is based on ELAPSED time, not just on-duty hours
             available_drive = min(
                 self.driving_limit - state['drive_hours_today'],
-                self.on_duty_window - state['on_duty_hours_today'],
+                self.on_duty_window - state['window_hours_elapsed'],  # Use elapsed window time
                 self.break_required_after - state['drive_since_break'],
                 self.cycle_limit - state['cycle_hours_used'],
                 remaining_hours
@@ -247,7 +251,7 @@ class HOSCalculator:
                     continue
 
                 elif (state['drive_hours_today'] >= self.driving_limit or
-                      state['on_duty_hours_today'] >= self.on_duty_window):
+                      state['window_hours_elapsed'] >= self.on_duty_window):
                     # Post-trip inspection before 10-hour rest
                     activities.append(self._create_activity(
                         state, 'post_trip', 'Post-trip inspection', self.post_trip_duration
@@ -306,7 +310,8 @@ class HOSCalculator:
     def _advance_time(self, state: dict, hours: float, is_driving: bool = False) -> None:
         """Advance time and update tracking."""
         state['current_time'] += timedelta(hours=hours)
-        
+        state['window_hours_elapsed'] += hours  # All time counts toward 14-hr window
+
         if is_driving:
             state['drive_hours_today'] += hours
             state['on_duty_hours_today'] += hours
@@ -317,26 +322,41 @@ class HOSCalculator:
             state['cycle_hours_used'] += hours
 
     def _take_break(self, state: dict) -> None:
-        """Take a 30-minute break."""
+        """Take a 30-minute break.
+
+        Per FMCSA: Break time counts toward the 14-hour window (elapsed time)
+        but does NOT count toward on-duty hours or cycle hours when taken as off-duty.
+        """
         state['current_time'] += timedelta(hours=self.break_duration)
+        state['window_hours_elapsed'] += self.break_duration  # Counts toward 14-hr window
         state['drive_since_break'] = 0
-        # Break doesn't count toward on-duty or cycle
+        # Break doesn't count toward on-duty or cycle hours
 
     def _take_rest(self, state: dict) -> None:
-        """Take a 10-hour rest period."""
+        """Take a 10-hour rest period.
+
+        Per FMCSA: 10 consecutive hours off-duty resets the 11-hour driving
+        and 14-hour window limits.
+        """
         state['current_time'] += timedelta(hours=self.off_duty_required)
         state['drive_hours_today'] = 0
         state['on_duty_hours_today'] = 0
+        state['window_hours_elapsed'] = 0  # Reset 14-hour window
         state['drive_since_break'] = 0
         state['current_day'] += 1
 
     def _take_restart(self, state: dict) -> None:
-        """Take a 34-hour restart."""
+        """Take a 34-hour restart.
+
+        Per FMCSA: 34 consecutive hours off-duty resets the 70-hour/8-day cycle
+        as well as the 11-hour driving and 14-hour window limits.
+        """
         state['current_time'] += timedelta(hours=self.restart_duration)
         state['drive_hours_today'] = 0
         state['on_duty_hours_today'] = 0
+        state['window_hours_elapsed'] = 0  # Reset 14-hour window
         state['drive_since_break'] = 0
-        state['cycle_hours_used'] = 0
+        state['cycle_hours_used'] = 0  # Reset 70-hour cycle
         state['current_day'] += 1
 
     def _create_stop(
@@ -557,6 +577,11 @@ class HOSCalculator:
                 excess = total_logged - 24
                 sleeper_hours = max(0, sleeper_hours - excess)
 
+            # Calculate remaining hours (cap at 0 - negative values occur when
+            # multiple driving periods happen in same calendar day, which is HOS compliant)
+            driving_remaining = max(0, self.driving_limit - driving_hours)
+            on_duty_remaining = max(0, self.on_duty_window - (driving_hours + on_duty_hours))
+
             daily_schedules.append({
                 'day': day_idx,
                 'date': cal_date,
@@ -569,8 +594,8 @@ class HOSCalculator:
                 'total_hours': 24.0,
                 'activities': day_activities,
                 'stops': day_stops,
-                'driving_remaining': round(self.driving_limit - driving_hours, 2),
-                'on_duty_remaining': round(self.on_duty_window - (driving_hours + on_duty_hours), 2),
+                'driving_remaining': round(driving_remaining, 2),
+                'on_duty_remaining': round(on_duty_remaining, 2),
             })
 
         return daily_schedules
